@@ -4,5 +4,13 @@
 		{
 			"path": "."
 		}
-	]
+	],
+    "build_systems":
+    [
+        {
+            "name": "Build DemoXRay",
+            "file_patterns": ["*.uc"],
+            "cmd": ["$project_path/build.bat"]
+        }
+    ]
 }
