@@ -37,7 +37,7 @@ static final function int RotU2S(int A) {
 static final function string FrameStamp(int Frame) {
     local string S;
     S = string(Frame);
-    return "["$Left("      ", 6-Len(S))$S$"]";
+    return "["$Left("       ", 7-Len(S))$S$"]";
 }
 
 static final function string FormatFloat(float F, optional int Decimals) {
