@@ -24,6 +24,14 @@ var float LastDelta[3];
 var bool bHaveLineHeight;
 var float LineHeight;
 
+var DemoXRayLog Logger;
+var bool bOvertime;
+var int OvertimeStart;
+var int ClockTime;
+
+var vector TempVec;
+var DemoXRayDummy Dummy[32];
+
 // convert rotation representation from signed to unsigned
 static final function int RotS2U(int A) {
     return A & 0xFFFF;
@@ -65,8 +73,92 @@ static final function string FormatFloat(float F, optional int Decimals) {
     return Result;
 }
 
-function Print(coerce string S) {
-    Log(S, 'DemoXRay');
+event PostBeginPlay() {
+    local int i;
+
+    super.PostBeginPlay();
+
+    Logger = Spawn(class'DemoXRayLog');
+    Logger.StartLog();
+
+    for (i = 0; i < arraycount(Dummy); i++) {
+        Dummy[i] = Spawn(class'DemoXRayDummy');
+        Dummy[i].bCollideWorld = false;
+        Dummy[i].SetCollision(false, false, false);
+        Dummy[i].SetCollisionSize(0.0, 0.0);
+        Dummy[i].DrawType = DT_Mesh;
+    }
+}
+
+function LogEventCurFrame(DemoXRayLog.EDemoEvent E) {
+    local string TargetName;
+    local name WeaponAnim;
+    local float WeaponAnimFrame;
+    local rotator MouseDelta;
+    local int ClockStamp;
+
+    if (Following != none)
+        MouseDelta = (Following.ViewRotation - OldVR[0]);
+    if (Target != none)
+        TargetName = Target.PlayerReplicationInfo.PlayerName;
+    if (Following != none && Following.Weapon != none)
+        WeaponAnim = Following.Weapon.AnimSequence;
+    if (Following != none && Following.Weapon != none)
+        WeaponAnimFrame = Following.Weapon.AnimFrame;
+
+    if (PlayerOwner.GameReplicationInfo != none) {
+        if (bOvertime)
+            ClockStamp = PlayerOwner.GameReplicationInfo.ElapsedTime - OvertimeStart;
+        else
+            ClockStamp = PlayerOwner.GameReplicationInfo.RemainingTime;
+    }
+
+    Logger.LogEvent(
+        FrameCounter,
+        Level.TimeSeconds,
+        LastDelta[0],
+        ClockStamp,
+        E,
+        MouseDelta,
+        TargetName,
+        TargetAccuracy,
+        WeaponAnim,
+        WeaponAnimFrame
+    );
+}
+
+function LogEventPrevFrame(DemoXRayLog.EDemoEvent E) {
+    local string TargetName;
+    local name WeaponAnim;
+    local float WeaponAnimFrame;
+    local int ClockStamp;
+
+    if (OldTarget != none)
+        TargetName = OldTarget.PlayerReplicationInfo.PlayerName;
+    if (Following != none && Following.Weapon != none)
+        WeaponAnim = Following.Weapon.AnimSequence;
+    if (Following != none && Following.Weapon != none)
+        WeaponAnimFrame = Following.Weapon.AnimFrame;
+
+    if (PlayerOwner.GameReplicationInfo != none) {
+        if (bOvertime)
+            ClockStamp = PlayerOwner.GameReplicationInfo.ElapsedTime - OvertimeStart;
+        else
+            ClockStamp = PlayerOwner.GameReplicationInfo.RemainingTime;
+    }
+
+    Logger.LogEvent(
+        FrameCounter - 1,
+        Level.TimeSeconds - LastDelta[0],
+        LastDelta[1],
+        ClockStamp,
+        E,
+        (OldVR[0] - OldVR[1]),
+        TargetName,
+        TargetAccuracy,
+        WeaponAnim,
+        WeaponAnimFrame
+    );
 }
 
 function DrawCameraDelta(Canvas C) {
@@ -158,19 +250,23 @@ function DrawTarget(Canvas C) {
 
     if ((Target == none) != (OldTarget == none)) {
         if (Target != none) {
-            Print(FrameStamp(FrameCounter)@"1 - Over"@Target.PlayerReplicationInfo.PlayerName);
+            LogEventCurFrame(DE_Over);
         } else {
-            Print(FrameStamp(FrameCounter)@"1 - Left"@OldTarget.PlayerReplicationInfo.PlayerName);
+            LogEventPrevFrame(DE_Left);
         }
     } else if (Target != OldTarget) {
-        Print(FrameStamp(FrameCounter)@"1 - Left"@OldTarget.PlayerReplicationInfo.PlayerName);
-        Print(FrameStamp(FrameCounter)@"1 - Over"@Target.PlayerReplicationInfo.PlayerName);
+        LogEventPrevFrame(DE_Left);
+        LogEventCurFrame(DE_Over);
     }
 
     if (Target == none)
         return;
 
-    Print(FrameStamp(FrameCounter)@"2 - TargetAccuracy"@TargetAccuracy);
+    if (bTargetBehindCover) {
+        LogEventCurFrame(DE_OnTargetCover);
+    } else {
+        LogEventCurFrame(DE_OnTarget);
+    }
 
     Name = Target.PlayerReplicationInfo.PlayerName@"("$int(TargetAccuracy*100.0+0.5)$"%)";
 
@@ -193,17 +289,29 @@ function DrawTarget(Canvas C) {
     }
 }
 
-function PrintShot(int Frame, Pawn T, float Acc, bool bCover, vector MouseRPS) {
+function LogShotCurFrame(Pawn T, bool bCover) {
     if (T == none || bCover) {
-        Print(FrameStamp(Frame)@"3 - Missed");
+        LogEventCurFrame(DE_Missed);
     } else if (Following != none) {
-        if (Following.PlayerReplicationInfo.Team == T.PlayerReplicationInfo.Team) {
-            Print(FrameStamp(Frame)@"3 - HitTeam"@T.PlayerReplicationInfo.PlayerName@"("$Acc$")"@"["$FormatFloat(MouseRPS.X,3)$","$FormatFloat(MouseRPS.Y,3)$"]");
-        } else {
-            Print(FrameStamp(Frame)@"3 - HitEnemy"@T.PlayerReplicationInfo.PlayerName@"("$Acc$")"@"["$FormatFloat(MouseRPS.X,3)$","$FormatFloat(MouseRPS.Y,3)$"]");
-        }
+        if (Following.PlayerReplicationInfo.Team == T.PlayerReplicationInfo.Team)
+            LogEventCurFrame(DE_HitTeam);
+        else
+            LogEventCurFrame(DE_HitEnemy);
     } else {
-        Print(FrameStamp(Frame)@"3 - Hit"@T.PlayerReplicationInfo.PlayerName@"("$Acc$")"@"["$FormatFloat(MouseRPS.X,3)$","$FormatFloat(MouseRPS.Y,3)$"]");
+        LogEventCurFrame(DE_Hit);
+    }
+}
+
+function LogShotPrevFrame(Pawn T, bool bCover) {
+    if (T == none || bCover) {
+        LogEventPrevFrame(DE_Missed);
+    } else if (Following != none) {
+        if (Following.PlayerReplicationInfo.Team == T.PlayerReplicationInfo.Team)
+            LogEventPrevFrame(DE_HitTeam);
+        else
+            LogEventPrevFrame(DE_HitEnemy);
+    } else {
+        LogEventPrevFrame(DE_Hit);
     }
 }
 
@@ -212,8 +320,6 @@ function DrawFireState(Canvas C) {
     local string Text;
     local name AnimSeq;
     local float AnimFrame;
-    local rotator MouseDelta;
-    local vector MouseVel;
 
     if (Following == none) return;
     if (Following.Weapon == none) return;
@@ -230,21 +336,11 @@ function DrawFireState(Canvas C) {
         // maybe fired
         if (Left(string(OldAnimSeq), 4) ~= "Fire") {
             if (AnimFrame < OldAnimFrame) {
-                // fired
-                MouseDelta = (Following.ViewRotation - OldVR[1]);
-                MouseVel.X = RotU2S(MouseDelta.Pitch) / (LastDelta[0]+LastDelta[1]) / 65535.0;
-                MouseVel.Y = RotU2S(MouseDelta.Yaw) / (LastDelta[0]+LastDelta[1]) / 65535.0;
-
-                PrintShot(FrameCounter, Target, TargetAccuracy, bTargetBehindCover, MouseVel);
+                LogShotCurFrame(Target, bTargetBehindCover);
             }
             // else not fired
         } else {
-            // fired
-            MouseDelta = OldVR[0] - OldVR[2];
-            MouseVel.X = RotU2S(MouseDelta.Pitch) / (LastDelta[1]+LastDelta[2]) / 65535.0;
-            MouseVel.Y = RotU2S(MouseDelta.Yaw) / (LastDelta[1]+LastDelta[2]) / 65535.0;
-
-            PrintShot(FrameCounter - 1, OldTarget, OldTargetAccuracy, bOldTargetBehindCover, MouseVel);
+            LogShotPrevFrame(OldTarget, bOldTargetBehindCover);
         }
     }
 }
@@ -292,20 +388,74 @@ function DrawMovement(Canvas C) {
     C.DrawText(VelocityText);
 }
 
-simulated event PostRender( Canvas C ) {
+function DrawXRay(Canvas C) {
     local Pawn P;
+    local int i;
+    local ENetRole TempRole;
+    local vector ServerLoc;
+
+    for (i = 0; i < arraycount(PlayerOwner.GameReplicationInfo.PRIArray); i++) {
+        if (PlayerOwner.GameReplicationInfo.PRIArray[i] == none) break; // end of array
+        P = Pawn(PlayerOwner.GameReplicationInfo.PRIArray[i].Owner);
+        if (P == none) continue;
+        if (P == Following) continue;
+
+        C.DrawActor(P, false, true);
+
+        if (P.IsA('bbPlayer') == false) continue;
+
+        TempVec = vect(0.0, 0.0, 0.0);
+
+        TempRole = P.Role;
+        P.Role = ROLE_Authority;
+        SetPropertyText("TempVec", P.GetPropertyText("IGPlus_LocationOffsetFix_ServerLocation"));
+        P.Role = TempRole;
+
+        ServerLoc = TempVec;
+        if (ServerLoc dot ServerLoc == 0) continue;
+
+        Dummy[i].SetLocation(ServerLoc);
+        Dummy[i].SetRotation(P.Rotation);
+        Dummy[i].Mesh = P.Mesh;
+        Dummy[i].AnimSequence = P.AnimSequence;
+        Dummy[i].AnimFrame = P.AnimFrame;
+
+        Dummy[i].bHidden = false;
+        C.DrawActor(Dummy[i], true, false);
+        Dummy[i].bHidden = true;
+    }
+
+    // foreach AllActors(class'Pawn', P)
+    //     if (P.IsA('Spectator') == false && P != Following)
+    //         C.DrawActor(P, false, true);
+}
+
+simulated event PostRender( Canvas C ) {
     local float X,Y;
     local Actor VT;
+
+    if (PlayerOwner.GameReplicationInfo != none) {
+        if (PlayerOwner.GameReplicationInfo.GameEndedComments != "") {
+            if (Logger != none) {
+                Logger.StopLog();
+                Logger.Destroy();
+                Logger = none;
+            }
+            return;
+        }
+        if (PlayerOwner.GameReplicationInfo.RemainingTime == 0) {
+            bOvertime = true;
+            OvertimeStart = PlayerOwner.GameReplicationInfo.ElapsedTime;
+        }
+    }
 
     VT = PlayerOwner;
     while (VT != none && VT.IsA('PlayerPawn') && PlayerPawn(VT).ViewTarget != none)
         VT = PlayerPawn(VT).ViewTarget;
 
-    foreach AllActors(class'Pawn', P)
-        if (P.IsA('Spectator') == false && P != VT)
-            C.DrawActor(P, false, true);
-
     Following = Pawn(VT);
+
+    DrawXRay(C);
 
     C.Font = HUD.MyFonts.GetSmallFont(C.ClipX);
     C.DrawColor.R = 255;
