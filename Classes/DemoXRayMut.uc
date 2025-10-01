@@ -1,4 +1,4 @@
-class DemoXRayMut extends Mutator;
+class DemoXRayMut extends Mutator dependson(DemoXRayLog);
 
 #exec Texture Import File=Textures\Dot.pcx Name=Dot Mips=Off
 
